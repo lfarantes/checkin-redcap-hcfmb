@@ -177,12 +177,13 @@ if submetido:
     else:
         with st.spinner("Gerando novo registro e integrando instrumentos sequenciais..."):
             
-            # Construção do payload unificado respeitando o status completo ('2') de cada instrumento
+            # Ajuste definitivo: Passamos 0 (inteiro) ou a string padrão "new" para que o PyCap valide e o REDCap execute o auto-incremento
             dados_formulario = {
+                "record_id": "0",  # <--- MODIFICADO AQUI: Definido como "0" para forçar o reconhecimento do campo no PyCap
                 "ra": ra,
                 "nome": nome,
                 "e_mail": e_mail,
-                "dados_pessoais_complete": "2",  # Instrumento 1 completo
+                "dados_pessoais_complete": "2",  
                 
                 "data_e_horario": data_envio_redcap,
                 "horario": horario_atual,
@@ -201,13 +202,13 @@ if submetido:
                 "clareza_proximos_passos": opcoes_suporte[clareza_proximos_passos],
                 "avalia_produtividade": opcoes_produtividade[avalia_produtividade],
                 "sente_que_esta_atrasado": opcoes_atrasado[sente_que_esta_atrasado],
-                "check_in_progresso_pos_graduacao_complete": "2",  # Instrumento 2 completo
+                "check_in_progresso_pos_graduacao_complete": "2",  
                 
                 "por_que_se_sente_bem": "1" if por_que_se_sente_bem == "Sim" else "0",
-                "descreva_como_se_sente": "%s:" % descreva_como_se_sente if descreva_como_se_sente else "",
+                "descreva_como_se_sente": descreva_como_se_sente,
                 "alguns_sinais_de_estresse": alguns_sinais_de_estresse,
                 "gostaria_de_falar_um_pouco": gostaria_de_falar_um_pouco,
-                "como_se_sente_hoje_complete": "2"  # Instrumento 3 completo
+                "como_se_sente_hoje_complete": "2"  
             }
             
             # Atribuição dinâmica do vetor de checkboxes
@@ -217,16 +218,21 @@ if submetido:
             try:
                 # Transação 1: Criação automatizada do registro via auto-numbering
                 resposta_api = project.import_records([dados_formulario], force_auto_number=True)
-                record_id_gerado = resposta_api.get('ids', [None])[0] if isinstance(resposta_api, dict) else None
                 
-                # Resgate do ID via exportação se houver encapsulamento simplificado de resposta
+                # Resgate do ID gerado mapeado de forma robusta
+                record_id_gerado = None
+                if isinstance(resposta_api, dict):
+                    if 'ids' in resposta_api and resposta_api['ids']:
+                        record_id_gerado = resposta_api['ids'][0]
+                
+                # Fallback de segurança: Caso o retorno venha em outro formato estruturado, localizamos pelo RA cadastrado na sessão atual
                 if not record_id_gerado:
                     registros_aluno = project.export_records(records=None, fields=['record_id', 'ra'])
                     for r in registros_aluno:
                         if r['ra'] == ra:
                             record_id_gerado = r['record_id']
 
-                # Transação 2: Vinculação estruturada do arquivo anexo ao ID computado
+                # Transação 2: Vinculação do arquivo anexo ao ID gerado automaticamente
                 if record_id_gerado:
                     project.import_file(
                         record=str(record_id_gerado),
@@ -234,9 +240,9 @@ if submetido:
                         file_name=arquivo_cronograma.name,
                         file_object=arquivo_cronograma
                     )
-                    st.success(f"🎉 Sucesso total! Todos os 3 instrumentos foram computados no **ID automático: {record_id_gerado}** para {nome}.")
+                    st.success(f"🎉 Sucesso total! Todos os 3 instrumentos foram gravados no **ID automático: {record_id_gerado}** para {nome}.")
                 else:
-                    st.warning("Dados gravados com sucesso, mas o ID gerado automaticamente ficou inacessível temporariamente para vincular o arquivo anexo.")
+                    st.warning("Dados salvos, mas não conseguimos rastrear o ID automático para vincular o arquivo anexo.")
                     
             except Exception as e:
                 st.error(f"Erro transacional ao processar dados nos instrumentos estruturados do REDCap: {e}")
