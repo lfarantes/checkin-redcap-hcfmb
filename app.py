@@ -6,9 +6,9 @@ from datetime import datetime
 # Configuração da página do Streamlit
 st.set_page_config(page_title="Check-in Pós-Graduação", page_icon="🎓", layout="centered")
 
-# Configurações de conexão com o REDCap do HCFMB Unesp
-REDCAP_API_URL = "https://redcap.hcfmb.unesp.br/api/"
-TOKEN = "4EBE39393EB65DCE57283D2A9C307F9E"
+# Configurações de conexão com o REDCap do HCFMB Unesp (Utilizando os Secrets seguros)
+REDCAP_API_URL = st.secrets["REDCAP_API_URL"]
+TOKEN = st.secrets["REDCAP_TOKEN"]
 
 @st.cache_resource
 def get_redcap_project():
@@ -20,8 +20,17 @@ def get_redcap_project():
 
 project = get_redcap_project()
 
-# Dicionários de mapeamento para as opções do formulário
-opcoes_progresso = {
+# Lista de opções para as barras horizontais (Exatamente como o REDCap espera)
+opcoes_progresso = [
+    "0% → Não iniciei",
+    "25% → Início",
+    "50% → Em andamento",
+    "75% → Quase finalizado",
+    "100% → Concluído"
+]
+
+# Dicionário reverso para descobrir o código numérico ("0", "25", etc.) a partir do texto selecionado
+mapa_valores_redcap = {
     "0% → Não iniciei": "0",
     "25% → Início": "25",
     "50% → Em andamento": "50",
@@ -29,6 +38,7 @@ opcoes_progresso = {
     "100% → Concluído": "100"
 }
 
+# Dicionários de mapeamento para as opções dos blocos seguintes (Radios)
 opcoes_organizacao = {
     "Nada organizado": "0",
     "Pouco": "1",
@@ -55,9 +65,9 @@ with st.form("form_redcap", clear_on_submit=False):
     st.header("Identificação Geral")
     record_id = st.text_input("Record ID (Código do Aluno) *", help="Insira o identificador único do registro.")
     
-    # Tratamento de Data/Horário respeitando os requisitos da API e a usabilidade em tela
-    data_envio_redcap = datetime.now().strftime("%Y-%m-%d")  # Padrão YYYY-MM-DD exigido estritamente pelo banco do REDCap
-    data_visualizacao = datetime.now().strftime("%d/%m/%Y")  # Visualização amigável na interface do usuário
+    # Tratamento de Data/Horário
+    data_envio_redcap = datetime.now().strftime("%Y-%m-%d")
+    data_visualizacao = datetime.now().strftime("%d/%m/%Y")
     horario_atual = datetime.now().strftime("%H:%M")
     
     st.info(f"📅 **Data:** {data_visualizacao} | ⏰ **Horário:** {horario_atual}")
@@ -66,17 +76,18 @@ with st.form("form_redcap", clear_on_submit=False):
     st.markdown("---")
     st.subheader("BLOCO 1 - Andamento Acadêmico")
     
-    andamento_academico = st.radio("Andamento Acadêmico *", list(opcoes_progresso.keys()))
+    # Nova abordagem de barra de rolagem horizontal usando select_slider
+    andamento_academico = st.select_slider("Andamento Acadêmico *", options=opcoes_progresso)
     
     # Upload do arquivo de cronograma
     arquivo_cronograma = st.file_uploader("Envie aqui seu cronograma (PDF, DOCX, etc.) *", type=["pdf", "docx", "xlsx", "txt"])
     
-    disciplinas_obrigatorias = st.radio("Disciplinas obrigatórias *", list(opcoes_progresso.keys()))
-    desenvolvimento_do_projeto = st.radio("Desenvolvimento do projeto/pesquisa *", list(opcoes_progresso.keys()))
-    revisao_de_literatura = st.radio("Revisão de literatura *", list(opcoes_progresso.keys()))
-    coleta_de_dados = st.radio("Coleta de dados *", list(opcoes_progresso.keys()))
-    analise_de_dados = st.radio("Análise de dados *", list(opcoes_progresso.keys()))
-    escrita_cientifica = st.radio("Escrita científica (artigo/dissertação/tese) *", list(opcoes_progresso.keys()))
+    disciplinas_obrigatorias = st.select_slider("Disciplinas obrigatórias *", options=opcoes_progresso)
+    desenvolvimento_do_projeto = st.select_slider("Desenvolvimento do projeto/pesquisa *", options=opcoes_progresso)
+    revisao_de_literatura = st.select_slider("Revisão de literatura *", options=opcoes_progresso)
+    coleta_de_dados = st.select_slider("Coleta de dados *", options=opcoes_progresso)
+    analise_de_dados = st.select_slider("Análise de dados *", options=opcoes_progresso)
+    escrita_cientifica = st.select_slider("Escrita científica (artigo/dissertação/tese) *", options=opcoes_progresso)
 
     st.markdown("---")
     st.subheader("BLOCO 2 - Organização e prazos")
@@ -107,7 +118,6 @@ with st.form("form_redcap", clear_on_submit=False):
 
     st.write("**Como se sente (Selecione todas as opções aplicáveis) *:**")
     
-    # Mapeamento do vetor de checkboxes do dicionário de dados
     checkbox_labels = [
         "estressado(a)", "cansado(a)", "sobrecarregado(a)", "ansioso(a)", "triste",
         "desmotivado(a)", "sem perspectiva", "irritado(a)", "preocupado(a)", "solitário(a)",
@@ -123,7 +133,7 @@ with st.form("form_redcap", clear_on_submit=False):
 
     gostaria_de_falar_um_pouco = st.text_area("Gostaria de falar um pouco mais? Como podemos te ajudar? *")
 
-    # Botão de submissão do formulário
+    # Botão de submissão do formulário (Voltará a aparecer agora que o código compila limpo)
     submetido = st.form_submit_button("Enviar Dados para o REDCap")
 
 # Processamento pós-clique na camada lógica de submissão
@@ -134,18 +144,19 @@ if submetido:
         st.error("O upload do **cronograma** é obrigatório.")
     else:
         with st.spinner("Enviando dados estruturados e arquivos anexos para o REDCap HCFMB..."):
-            # Estruturando payload de variáveis textuais e de escolha única
+            
+            # Convertendo os textos selecionados nas barras para as strings equivalentes do REDCap usando o dicionário reverso
             dados_formulario = {
                 "record_id": record_id,
                 "data_e_horario": data_envio_redcap,
                 "horario": horario_atual,
-                "andamento_academico": opcoes_progresso[andamento_academico],
-                "disciplinas_obrigatorias": opcoes_progresso[disciplinas_obrigatorias],
-                "desenvolvimento_do_projeto": opcoes_progresso[desenvolvimento_do_projeto],
-                "revisao_de_literatura": opcoes_progresso[revisao_de_literatura],
-                "coleta_de_dados": opcoes_progresso[coleta_de_dados],
-                "analise_de_dados": opcoes_progresso[analise_de_dados],
-                "escrita_cientifica": opcoes_progresso[escrita_cientifica],
+                "andamento_academico": mapa_valores_redcap[andamento_academico],
+                "disciplinas_obrigatorias": mapa_valores_redcap[disciplinas_obrigatorias],
+                "desenvolvimento_do_projeto": mapa_valores_redcap[desenvolvimento_do_projeto],
+                "revisao_de_literatura": mapa_valores_redcap[revisao_de_literatura],
+                "coleta_de_dados": mapa_valores_redcap[coleta_de_dados],
+                "analise_de_dados": mapa_valores_redcap[analise_de_dados],
+                "escrita_cientifica": mapa_valores_redcap[escrita_cientifica],
                 "estou_conseguindo_cumprir": opcoes_organizacao[estou_conseguindo_cumprir],
                 "rotina_estudos_organizada": opcoes_organizacao[rotina_estudos_organizada],
                 "equilibrar_demandas": opcoes_organizacao[equilibrar_demandas],
@@ -154,14 +165,14 @@ if submetido:
                 "clareza_proximos_passos": opcoes_suporte[clareza_proximos_passos],
                 "avalia_produtividade": opcoes_produtividade[avalia_produtividade],
                 "sente_que_esta_atrasado": opcoes_atrasado[sente_que_esta_atrasado],
-                "check_in_progresso_pos_graduacao_complete": "2",  # Define o Instrumento 1 como Completo
+                "check_in_progresso_pos_graduacao_complete": "2",
                 "por_que_se_sente_bem": "1" if por_que_se_sente_bem == "Sim" else "0",
                 "alguns_sinais_de_estresse": alguns_sinais_de_estresse,
                 "gostaria_de_falar_um_pouco": gostaria_de_falar_um_pouco,
-                "como_se_sente_hoje_complete": "2"  # Define o Instrumento 2 como Completo
+                "como_se_sente_hoje_complete": "2"
             }
             
-            # Vinculando as checkboxes dinamicamente ao padrão 'variavel___indice' da API do REDCap
+            # Vinculando as checkboxes dinamicamente
             for idx, checked in enumerate(check_choices, start=1):
                 dados_formulario[f"como_se_sente___{idx}"] = "1" if checked else "0"
 
@@ -169,12 +180,12 @@ if submetido:
                 # Transação 1: Upload de registros e variáveis textuais
                 response = project.import_records([dados_formulario])
                 
-                # Transação 2: Upload binário do arquivo usando o parâmetro unificado file_object
+                # Transação 2: Upload binário do arquivo
                 project.import_file(
                     record=record_id,
                     field="envie_aqui_seu_cronograma",
                     file_name=arquivo_cronograma.name,
-                    file_object=arquivo_cronograma  # Passa o ponteiro do arquivo gerado pelo Streamlit diretamente
+                    file_object=arquivo_cronograma
                 )
                 
                 st.success(f"🎉 Registro '{record_id}' e arquivo salvos com sucesso no servidor REDCap HCFMB!")
