@@ -2,6 +2,7 @@ import streamlit as st
 from redcap import Project
 import requests
 from datetime import datetime
+import json
 
 # Configuração da página do Streamlit
 st.set_page_config(page_title="Check-in Pós-Graduação", page_icon="🎓", layout="centered")
@@ -20,7 +21,7 @@ def get_redcap_project():
 
 project = get_redcap_project()
 
-# Lista de opções para as barras horizontais (Exatamente como o REDCap espera)
+# Lista de opções para as barras horizontais
 opcoes_progresso = [
     "0% → Não iniciei",
     "25% → Início",
@@ -29,7 +30,7 @@ opcoes_progresso = [
     "100% → Concluído"
 ]
 
-# Dicionário reverso para descobrir o código numérico ("0", "25", etc.) a partir do texto selecionado
+# Dicionário reverso para descobrir o código numérico
 mapa_valores_redcap = {
     "0% → Não iniciei": "0",
     "25% → Início": "25",
@@ -62,8 +63,11 @@ st.write("Por favor, preencha as informações abaixo para atualizar seu andamen
 # Formulário único do Streamlit
 with st.form("form_redcap", clear_on_submit=False):
     
-    st.header("Identificação Geral")
-    record_id = st.text_input("Record ID (Código do Aluno) *", help="Insira o identificador único do registro.")
+    # --- BLOCO: Identificação do Usuário ---
+    st.header("👤 Identificação do Aluno")
+    ra = st.text_input("RA (Registro Acadêmico) *", help="Insira apenas números.")
+    nome = st.text_input("Nome Completo *")
+    e_mail = st.text_input("E-mail Institucional *")
     
     # Tratamento de Data/Horário
     data_envio_redcap = datetime.now().strftime("%Y-%m-%d")
@@ -76,7 +80,6 @@ with st.form("form_redcap", clear_on_submit=False):
     st.markdown("---")
     st.subheader("BLOCO 1 - Andamento Acadêmico")
     
-    # Nova abordagem de barra de rolagem horizontal usando select_slider
     andamento_academico = st.select_slider("Andamento Acadêmico *", options=opcoes_progresso)
     
     # Upload do arquivo de cronograma
@@ -114,40 +117,58 @@ with st.form("form_redcap", clear_on_submit=False):
     st.header("🧠 Como se sente hoje")
     
     por_que_se_sente_bem = st.radio("Você parece estar bem no momento. Continue cuidando da sua rotina. Gostaria de compartilhar o por que se sente bem? *", ["Sim", "Não"])
-    alguns_sinais_de_estresse = st.text_area("Alguns sinais de estresse apareceram. Vale a pena observar e cuidar de você. Como você explica esse sentimento? Como podemos te ajudar? *")
-
-    st.write("**Como se sente (Selecione todas as opções aplicáveis) *:**")
     
-    checkbox_labels = [
-        "estressado(a)", "cansado(a)", "sobrecarregado(a)", "ansioso(a)", "triste",
-        "desmotivado(a)", "sem perspectiva", "irritado(a)", "preocupado(a)", "solitário(a)",
-        "doente", "com dificuldade para dormir", "dificuldade de concentração",
-        "pressão acadêmica/profissional", "muitos compromissos", "problemas pessoais",
-        "conflitos familiares ou interpessoais", "dificuldades financeiras",
-        "sinto que não sou capaz", "dificuldade em conciliar trabalho, estudo e vida pessoal"
-    ]
+    # Inicialização das variáveis condicionais com valores vazios por segurança (caso marque "Não")
+    descreva_como_se_sente = ""
+    alguns_sinais_de_estresse = ""
+    check_choices = [False] * 20
     
-    check_choices = []
-    for label in checkbox_labels:
-        check_choices.append(st.checkbox(label))
+    # Condicional estrito: se responder "Sim", exibe os três campos dependentes na tela
+    if por_que_se_sente_bem == "Sim":
+        st.markdown("#### Detalhes sobre seus sentimentos")
+        
+        # 1. Campo novo adicionado e condicionado ao "Sim"
+        descreva_como_se_sente = st.text_area("Descreva como se sente *", help="Espaço para detalhar seu estado atual.")
+        
+        # 2. Campo de estresse condicionado ao "Sim"
+        alguns_sinais_de_estresse = st.text_area("Alguns sinais de estresse apareceram. Vale a pena observar e cuidar de você. Como você explica esse sentimento? Como podemos te ajudar? *")
 
-    gostaria_de_falar_um_pouco = st.text_area("Gostaria de falar um pouco mais? Como podemos te ajudar? *")
+        st.write("**Como se sente (Selecione todas as opções aplicáveis) *:**")
+        
+        # 3. Vetor de checkboxes condicionado ao "Sim"
+        checkbox_labels = [
+            "estressado(a)", "cansado(a)", "sobrecarregado(a)", "ansioso(a)", "triste",
+            "desmotivado(a)", "sem perspectiva", "irritado(a)", "preocupado(a)", "solitário(a)",
+            "doente", "com dificuldade para dormir", "dificuldade de concentração",
+            "pressão acadêmica/profissional", "muitos compromissos", "problemas pessoais",
+            "conflitos familiares ou interpessoais", "dificuldades financeiras",
+            "sinto que não sou capaz", "dificuldade em conciliar trabalho, estudo e vida pessoal"
+        ]
+        
+        check_choices = []
+        for label in checkbox_labels:
+            check_choices.append(st.checkbox(label))
 
-    # Botão de submissão do formulário (Voltará a aparecer agora que o código compila limpo)
+    st.markdown("---")
+    gostaria_de_falar_um_pouco = st.text_area("Gostaria de falar um pouco mais? Como podemos te ajudar?")
+
+    # Botão de submissão do formulário
     submetido = st.form_submit_button("Enviar Dados para o REDCap")
 
 # Processamento pós-clique na camada lógica de submissão
 if submetido:
-    if not record_id:
-        st.error("O campo **Record ID** é obrigatório.")
+    if not ra or not nome or not e_mail:
+        st.error("Os campos de identificação (**RA**, **Nome** e **E-mail**) são obrigatórios.")
     elif arquivo_cronograma is None:
         st.error("O upload do **cronograma** é obrigatório.")
     else:
-        with st.spinner("Enviando dados estruturados e arquivos anexos para o REDCap HCFMB..."):
+        with st.spinner("Gerando novo registro e enviando dados para o REDCap HCFMB..."):
             
-            # Convertendo os textos selecionados nas barras para as strings equivalentes do REDCap usando o dicionário reverso
+            # Estrutura do payload para enviar via API
             dados_formulario = {
-                "record_id": record_id,
+                "ra": ra,
+                "nome": nome,
+                "e_mail": e_mail,
                 "data_e_horario": data_envio_redcap,
                 "horario": horario_atual,
                 "andamento_academico": mapa_valores_redcap[andamento_academico],
@@ -167,28 +188,40 @@ if submetido:
                 "sente_que_esta_atrasado": opcoes_atrasado[sente_que_esta_atrasado],
                 "check_in_progresso_pos_graduacao_complete": "2",
                 "por_que_se_sente_bem": "1" if por_que_se_sente_bem == "Sim" else "0",
+                "descreva_como_se_sente": descreva_como_se_sente,  # Sincroniza o valor do campo novo com a API
                 "alguns_sinais_de_estresse": alguns_sinais_de_estresse,
                 "gostaria_de_falar_um_pouco": gostaria_de_falar_um_pouco,
                 "como_se_sente_hoje_complete": "2"
             }
             
-            # Vinculando as checkboxes dinamicamente
             for idx, checked in enumerate(check_choices, start=1):
                 dados_formulario[f"como_se_sente___{idx}"] = "1" if checked else "0"
 
             try:
-                # Transação 1: Upload de registros e variáveis textuais
-                response = project.import_records([dados_formulario])
+                # Transação 1: Envio dos dados com geração de ID automático no servidor do HCFMB
+                resposta_api = project.import_records([dados_formulario], force_auto_number=True)
                 
-                # Transação 2: Upload binário do arquivo
-                project.import_file(
-                    record=record_id,
-                    field="envie_aqui_seu_cronograma",
-                    file_name=arquivo_cronograma.name,
-                    file_object=arquivo_cronograma
-                )
+                # Resgate do ID criado
+                record_id_gerado = resposta_api.get('ids', [None])[0] if isinstance(resposta_api, dict) else None
                 
-                st.success(f"🎉 Registro '{record_id}' e arquivo salvos com sucesso no servidor REDCap HCFMB!")
+                # Fallback de localização se o PyCap retornar formato diferente de dicionário
+                if not record_id_gerado:
+                    registros_aluno = project.export_records(records=None, fields=['record_id', 'ra'])
+                    for r in registros_aluno:
+                        if r['ra'] == ra:
+                            record_id_gerado = r['record_id']
+
+                # Transação 2: Upload do arquivo associado ao ID gerado automaticamente
+                if record_id_gerado:
+                    project.import_file(
+                        record=str(record_id_gerado),
+                        field="envie_aqui_seu_cronograma",
+                        file_name=arquivo_cronograma.name,
+                        file_object=arquivo_cronograma
+                    )
+                    st.success(f"🎉 Sucesso! Registro criado automaticamente com o **ID: {record_id_gerado}** para o aluno {nome}.")
+                else:
+                    st.warning("Os dados textuais foram salvos, mas não conseguimos rastrear o ID automático para anexar o arquivo. Verifique no painel do REDCap.")
                 
             except Exception as e:
-                st.error(f"Falha de gravação ou upload de documento na API do REDCap: {e}")
+                st.error(f"Falha de gravação na API autoincremental do REDCap: {e}")
