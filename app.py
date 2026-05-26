@@ -159,55 +159,66 @@ if submetido:
     else:
         with st.spinner("Gerando novo registro e enviando dados para o REDCap HCFMB..."):
             
-            # ATUALIZAÇÃO AQUI: Enviando a chave 'record_id' vazia para o REDCap autoincrementar
-            dados_formulario = {
-                "record_id": "", 
-                "ra": ra,
-                "nome": nome,
-                "e_mail": e_mail,
-                "data_e_horario": data_envio_redcap,
-                "horario": horario_atual,
-                "andamento_academico": mapa_valores_redcap[andamento_academico],
-                "disciplinas_obrigatorias": mapa_valores_redcap[disciplinas_obrigatorias],
-                "desenvolvimento_do_projeto": mapa_valores_redcap[desenvolvimento_do_projeto],
-                "revisao_de_literatura": mapa_valores_redcap[revisao_de_literatura],
-                "coleta_de_dados": mapa_valores_redcap[coleta_de_dados],
-                "analise_de_dados": mapa_valores_redcap[analise_de_dados],
-                "escrita_cientifica": mapa_valores_redcap[escrita_cientifica],
-                "estou_conseguindo_cumprir": opcoes_organizacao[estou_conseguindo_cumprir],
-                "rotina_estudos_organizada": opcoes_organizacao[rotina_estudos_organizada],
-                "equilibrar_demandas": opcoes_organizacao[equilibrar_demandas],
-                "satisfeito_orientacao": opcoes_suporte[satisfeito_orientacao],
-                "sinto_suporte_programa": opcoes_suporte[sinto_suporte_programa],
-                "clareza_proximos_passos": opcoes_suporte[clareza_proximos_passos],
-                "avalia_produtividade": opcoes_produtividade[avalia_produtividade],
-                "sente_que_esta_atrasado": opcoes_atrasado[sente_que_esta_atrasado],
-                "check_in_progresso_pos_graduacao_complete": "2",
-                "por_que_se_sente_bem": "1" if por_que_se_sente_bem == "Sim" else "0",
-                "descreva_como_se_sente": descreva_como_se_sente,
-                "alguns_sinais_de_estresse": alguns_sinais_de_estresse,
-                "gostaria_de_falar_um_pouco": gostaria_de_falar_um_pouco,
-                "como_se_sente_hoje_complete": "2"
-            }
-            
-            for idx, checked in enumerate(check_choices, start=1):
-                dados_formulario[f"como_se_sente___{idx}"] = "1" if checked else "0"
-
             try:
-                # Transação 1: Envio com record_id em branco + force_auto_number=True
+                # SOLUÇÃO DEFINITIVA: Buscamos a lista atual de IDs para calcular o próximo número inteiro livre
+                # Isso impede que o PyCap delete o campo ou dê erro de ausência de record_id
+                registros_existentes = project.export_records(fields=['record_id'])
+                if registros_existentes:
+                    ids_numericos = [int(r['record_id']) for r in registros_existentes if r['record_id'].isdigit()]
+                    proximo_id_estimado = str(max(ids_numericos) + 1) if ids_numericos else "1"
+                else:
+                    proximo_id_estimado = "1"
+                
+                # Injetamos o ID calculado. O REDCap usará force_auto_number para confirmar ou ajustar esse número na fila
+                dados_formulario = {
+                    "record_id": proximo_id_estimado, 
+                    "ra": ra,
+                    "nome": nome,
+                    "e_mail": e_mail,
+                    "data_e_horario": data_envio_redcap,
+                    "horario": horario_atual,
+                    "andamento_academico": mapa_valores_redcap[andamento_academico],
+                    "disciplinas_obrigatorias": mapa_valores_redcap[disciplinas_obrigatorias],
+                    "desenvolvimento_do_projeto": mapa_valores_redcap[desenvolvimento_do_projeto],
+                    "revisao_de_literatura": mapa_valores_redcap[revisao_de_literatura],
+                    "coleta_de_dados": mapa_valores_redcap[coleta_de_dados],
+                    "analise_de_dados": mapa_valores_redcap[analise_de_dados],
+                    "escrita_cientifica": mapa_valores_redcap[escrita_cientifica],
+                    "estou_conseguindo_cumprir": opcoes_organizacao[estou_conseguindo_cumprir],
+                    "rotina_estudos_organizada": opcoes_organizacao[rotina_estudos_organizada],
+                    "equilibrar_demandas": opcoes_organizacao[equilibrar_demandas],
+                    "satisfeito_orientacao": opcoes_suporte[satisfeito_orientacao],
+                    "sinto_suporte_programa": opcoes_suporte[sinto_suporte_programa],
+                    "clareza_proximos_passos": opcoes_suporte[clareza_proximos_passos],
+                    "avalia_produtividade": opcoes_produtividade[avalia_produtividade],
+                    "sente_que_esta_atrasado": opcoes_atrasado[sente_que_esta_atrasado],
+                    "check_in_progresso_pos_graduacao_complete": "2",
+                    "por_que_se_sente_bem": "1" if por_que_se_sente_bem == "Sim" else "0",
+                    "descreva_como_se_sente": descreva_como_se_sente,
+                    "alguns_sinais_de_estresse": alguns_sinais_de_estresse,
+                    "gostaria_de_falar_um_pouco": gostaria_de_falar_um_pouco,
+                    "como_se_sente_hoje_complete": "2"
+                }
+                
+                for idx, checked in enumerate(check_choices, start=1):
+                    dados_formulario[f"como_se_sente___{idx}"] = "1" if checked else "0"
+
+                # Transação 1: Envio seguro com o ID estruturado + salvaguarda do force_auto_number
                 resposta_api = project.import_records([dados_formulario], force_auto_number=True)
                 
-                # Resgate do ID criado pelo REDCap
-                record_id_gerado = resposta_api.get('ids', [None])[0] if isinstance(resposta_api, dict) else None
+                # Resgate do ID real retornado pelo servidor
+                record_id_gerado = None
+                if isinstance(resposta_api, dict):
+                    record_id_gerado = resposta_api.get('ids', [None])[0]
                 
-                # Fallback de localização caso o formato mude
+                # Fallback de checagem caso o PyCap traga apenas a contagem bruta
                 if not record_id_gerado:
                     registros_aluno = project.export_records(records=None, fields=['record_id', 'ra'])
                     for r in registros_aluno:
                         if r['ra'] == ra:
                             record_id_gerado = r['record_id']
 
-                # Transação 2: Upload do cronograma atrelado ao ID gerado
+                # Transação 2: Upload do cronograma atrelado ao ID gerado em definitivo
                 if record_id_gerado:
                     project.import_file(
                         record=str(record_id_gerado),
@@ -215,9 +226,9 @@ if submetido:
                         file_name=arquivo_cronograma.name,
                         file_object=arquivo_cronograma
                     )
-                    st.success(f"🎉 Sucesso! Registro criado automaticamente com o **ID: {record_id_gerado}** para o aluno {nome}.")
+                    st.success(f"🎉 Sucesso! Registro criado com o **ID definitivo: {record_id_gerado}** para o aluno {nome}.")
                 else:
-                    st.warning("Os dados textuais foram salvos, mas não conseguimos rastrear o ID automático para anexar o arquivo. Verifique no painel do REDCap.")
+                    st.warning("Os dados textuais foram salvos, mas não conseguimos localizar o ID numérico gerado para vincular o cronograma.")
                 
             except Exception as e:
                 st.error(f"Falha de gravação na API do REDCap: {e}")
