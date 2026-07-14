@@ -3,11 +3,11 @@ from redcap import Project
 import requests
 from datetime import datetime
 import json
+import pandas as pd
 
 # Configuração da página do Streamlit
-st.set_page_config(page_title="Check-in Pós-Graduação", page_icon="🎓", layout="centered")
+st.set_page_config(page_title="Check-in Pós-Graduação", page_icon="🎓", layout="wide")
 
-# Configurações de conexão com o REDCap do HCFMB Unesp (Utilizando os Secrets seguros)
 REDCAP_API_URL = st.secrets["REDCAP_API_URL"]
 TOKEN = st.secrets["REDCAP_TOKEN"]
 
@@ -21,23 +21,16 @@ def get_redcap_project():
 
 project = get_redcap_project()
 
-# Inicialização das variáveis de controle de sessão do Streamlit
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 if "dados_usuario" not in st.session_state:
     st.session_state.dados_usuario = {}
 
-# Lista de opções para as barras horizontais
 opcoes_progresso = [
-    "Selecione...",
-    "0% → Não iniciei",
-    "25% → Início",
-    "50% → Em andamento",
-    "75% → Quase finalizado",
-    "100% → Concluído"
+    "Selecione...", "0% → Não iniciei", "25% → Início", 
+    "50% → Em andamento", "75% → Quase finalizado", "100% → Concluído"
 ]
 
-# Dicionários de mapeamento (Visualização <-> Banco de Dados)
 mapa_valores_redcap = {
     "0% → Não iniciei": "0", "25% → Início": "25", "50% → Em andamento": "50", 
     "75% → Quase finalizado": "75", "100% → Concluído": "100"
@@ -56,77 +49,99 @@ mapa_reverso_produtividade = {v: k for k, v in opcoes_produtividade.items()}
 opcoes_atrasado = {"Não": "1", "Um pouco": "2", "Sim": "3"}
 mapa_reverso_atrasado = {v: k for k, v in opcoes_atrasado.items()}
 
-# Lista de rótulos das checkboxes de sentimentos
+atividades_cronograma = [
+    "Revisão bibliográfica", "Capacitação em ultrassonografia", "Elaboração/ajustes do projeto",
+    "Aprovação ética (CEP)", "Coleta de dados", "Organização do banco de dados",
+    "Análises preliminares", "Análise estatística final", "Interpretação dos resultados",
+    "Redação do artigo científico", "Redação da tese", "Revisão com orientador",
+    "Submissão do artigo"
+]
+
+# Semestres mapeados sequencialmente (Mapeamento padrão máximo de 10 semestres)
+lista_semestres_padrao = [
+    {"rotulo": "2025 - 1ºS", "ano": 2025, "semestre": 1},
+    {"rotulo": "2025 - 2ºS", "ano": 2025, "semestre": 2},
+    {"rotulo": "2026 - 1ºS", "ano": 2026, "semestre": 1},
+    {"rotulo": "2026 - 2ºS", "ano": 2026, "semestre": 2},
+    {"rotulo": "2027 - 1ºS", "ano": 2027, "semestre": 1},
+    {"rotulo": "2027 - 2ºS", "ano": 2027, "semestre": 2},
+    {"rotulo": "2028 - 1ºS", "ano": 2028, "semestre": 1},
+    {"rotulo": "2028 - 2ºS", "ano": 2028, "semestre": 2},
+    {"rotulo": "2029 - 1ºS", "ano": 2029, "semestre": 1},
+    {"rotulo": "2029 - 2ºS", "ano": 2029, "semestre": 2}
+]
+
 checkbox_labels = [
     "estressado(a)", "cansado(a)", "sobrecarregado(a)", "ansioso(a)", "triste",
     "desmotivado(a)", "sem perspectiva", "irritado(a)", "preocupado(a)", "solitário(a)",
     "doente", "com dificuldade para dormir", "dificuldade de concentração",
     "pressão acadêmica/profissional", "muitos compromissos", "problemas pessoais",
     "conflitos familiares ou interpessoais", "dificuldades financeiras",
-    "sinto que não sou capaz", "dificuldade em conciliar trabalho, estudo e vida pessoal"
+    "sinto que não sou capable", "dificuldade em conciliar trabalho estudo e vida pessoal"
 ]
+
+# Lógica auxiliar para determinar se um semestre está contido no intervalo de datas do aluno
+def semestre_no_intervalo(ano_semestre, data_ini, data_fim):
+    if not data_ini or not data_fim:
+        return True # Fallback para exibir tudo caso não informe datas
+    
+    # Define datas fictícias no meio de cada semestre para checagem simples
+    data_referencia = datetime(ano_semestre["ano"], 5, 1).date() if ano_semestre["semestre"] == 1 else datetime(ano_semestre["ano"], 11, 1).date()
+    return data_ini <= data_referencia <= data_fim
 
 # =============================================================================
 # FLUXO 1: TELA DE LOGIN
 # =============================================================================
 if not st.session_state.autenticado:
-    st.title("🔐 Login - Acompanhamento de Pós-Graduação")
-    st.write("Por favor, insira suas credenciais institucionais para acessar seu painel.")
-    
-    with st.form("form_login"):
-        input_usuario = st.text_input("Usuário / Login")
-        input_senha = st.text_input("Senha", type="password")
-        btn_login = st.form_submit_button("Entrar")
-        
-    if btn_login:
-        if not input_usuario or not input_senha:
-            st.error("Por favor, preencha ambos os campos de login e senha.")
-        else:
-            with st.spinner("Autenticando e extraindo histórico completo..."):
-                try:
-                    # Exporta TODOS os campos do projeto para fazer o carregamento integral
-                    registros = project.export_records()
-                    
-                    login_sucesso = False
-                    for reg in registros:
-                        if reg.get('login') == input_usuario and reg.get('senha') == input_senha:
-                            st.session_state.autenticado = True
-                            # Armazena o dicionário completo do REDCap na sessão
-                            st.session_state.dados_usuario = reg
-                            login_sucesso = True
-                            break
-                    
-                    if login_sucesso:
-                        st.success("Histórico carregado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.error("Usuário ou senha incorretos. Verifique suas credenciais.")
-                        
-                except Exception as e:
-                    st.error(f"Erro ao conectar com o serviço de autenticação: {e}")
+    col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+    with col_l2:
+        st.title("🔐 Login - Check-in Pós-Graduação")
+        with st.form("form_login"):
+            input_usuario = st.text_input("Usuário / Login")
+            input_senha = st.text_input("Senha", type="password")
+            btn_login = st.form_submit_button("Entrar")
+            
+        if btn_login:
+            if not input_usuario or not input_senha:
+                st.error("Por favor, preencha ambos os campos.")
+            else:
+                with st.spinner("Autenticando..."):
+                    try:
+                        registros = project.export_records()
+                        login_sucesso = False
+                        for reg in registros:
+                            if reg.get('login') == input_usuario and reg.get('senha') == input_senha:
+                                st.session_state.autenticado = True
+                                st.session_state.dados_usuario = reg
+                                login_sucesso = True
+                                break
+                        if login_sucesso:
+                            st.rerun()
+                        else:
+                            st.error("Credenciais inválidas.")
+                    except Exception as e:
+                        st.error(f"Erro na conexão: {e}")
 
 # =============================================================================
-# FLUXO 2: FORMULÁRIO PRINCIPAL (Liberado pós-autenticação com dados carregados)
+# FLUXO 2: FORMULÁRIO PRINCIPAL
 # =============================================================================
 else:
-    # Atalho para o dicionário de dados do usuário logado
     u_dados = st.session_state.dados_usuario
 
     col_titulo, col_logout = st.columns([5, 1])
     with col_titulo:
-        st.title("🎓 Sistema de Acompanhamento")
+        st.title("🎓 Sistema de Acompanhamento - UNESP")
     with col_logout:
-        if st.button("Sair 🚪"):
+        if st.button("Sair 🚪", use_container_width=True):
             st.session_state.autenticado = False
             st.session_state.dados_usuario = {}
             st.rerun()
 
-    st.write(f"Olá, **{u_dados.get('nome', 'Discente')}**! Abaixo estão os seus dados consolidados no último check-in.")
-
-    tab_pessoais, tab_progresso, tab_sentimentos = st.tabs([
+    tab_pessoais, tab_progresso, tab_sentimentos, tab_cronograma = st.tabs([
         "👤 1. Dados Pessoais", 
         "📊 2. Progresso Acadêmico", 
-        "🧠 3. Como se Sente Hoje"
+        "🧠 3. Como se Sente Hoje",
+        "📅 4. Meu Cronograma"
     ])
 
     with st.form("form_redcap_abas", clear_on_submit=False):
@@ -139,14 +154,25 @@ else:
             nome = st.text_input("Nome Completo", value=u_dados.get('nome', ''))
             e_mail = st.text_input("E-mail Institucional", value=u_dados.get('e_mail', ''))
             
+            st.markdown("---")
+            st.subheader("🗓️ Vigência do seu Programa de Pós-Graduação")
+            st.caption("Insira os dados abaixo para que o cronograma ajuste automaticamente o número de semestres da sua matriz.")
+            
+            # Resgate das novas variáveis do REDCap
+            db_ini_pos = u_dados.get('data_inicio_pos', '')
+            init_ini_pos = datetime.strptime(db_ini_pos, "%Y-%m-%d").date() if db_ini_pos else None
+            
+            db_fim_pos = u_dados.get('data_fim_pos', '')
+            init_fim_pos = datetime.strptime(db_fim_pos, "%Y-%m-%d").date() if db_fim_pos else None
+
+            data_inicio_pos = st.date_input("Data de Início da Pós-Graduação", value=init_ini_pos, format="DD/MM/YYYY")
+            data_fim_pos = st.date_input("Data Prevista de Defesa", value=init_fim_pos, format="DD/MM/YYYY")
+            
         # --- ABA 2: PROGRESSO ACADÊMICO ---
         with tab_progresso:
             st.header("📊 Check-In Progresso Pós-Graduação")
-            
-            # Resgate e conversão segura de data e hora do banco
             db_data = u_dados.get('data_e_horario', '')
             init_data = datetime.strptime(db_data, "%Y-%m-%d").date() if db_data else None
-            
             db_hora = u_dados.get('horario', '')
             init_hora = datetime.strptime(db_hora, "%H:%M").time() if db_hora else None
 
@@ -155,13 +181,8 @@ else:
             st.markdown("---")
             
             st.subheader("BLOCO 1 - Andamento Acadêmico")
-            
-            # Mapeamento dinâmico dos Sliders com base no banco de dados
             andamento_academico = st.select_slider("Andamento Acadêmico", options=opcoes_progresso, value=mapa_reverso_progresso.get(u_dados.get('andamento_academico'), "Selecione..."), key="s_andamento")
-            
-            arquivo_cronograma = st.file_uploader("Envie aqui seu cronograma (PDF, DOCX, etc.)", type=["pdf", "docx", "xlsx", "txt"])
-            if u_dados.get('envie_aqui_seu_cronograma'):
-                st.caption(f"📁 Um cronograma já se encontra anexado ao seu perfil no REDCap.")
+            arquivo_cronograma = st.file_uploader("Envie aqui seu arquivo complementar (Opcional)", type=["pdf", "docx", "xlsx", "txt"])
             
             disciplinas_obrigatorias = st.select_slider("Disciplinas obrigatórias", options=opcoes_progresso, value=mapa_reverso_progresso.get(u_dados.get('disciplinas_obrigatorias'), "Selecione..."), key="s_disc")
             desenvolvimento_do_projeto = st.select_slider("Desenvolvimento do projeto/pesquisa", options=opcoes_progresso, value=mapa_reverso_progresso.get(u_dados.get('desenvolvimento_do_projeto'), "Selecione..."), key="s_desenv")
@@ -172,8 +193,6 @@ else:
 
             st.markdown("---")
             st.subheader("BLOCO 2 - Organização e prazos")
-            
-            # Resgate dos Radio Buttons calculando o índice salvo
             list_org = list(opcoes_organizacao.keys())
             idx_cumprir = list_org.index(mapa_reverso_organizacao[u_dados.get('estou_conseguindo_cumprir')]) if u_dados.get('estou_conseguindo_cumprir') in mapa_reverso_organizacao else None
             idx_rotina = list_org.index(mapa_reverso_organizacao[u_dados.get('rotina_estudos_organizada')]) if u_dados.get('rotina_estudos_organizada') in mapa_reverso_organizacao else None
@@ -209,43 +228,70 @@ else:
         # --- ABA 3: COMO SE SENTE HOJE ---
         with tab_sentimentos:
             st.header("🧠 Como se sente hoje")
-            
             db_bem = u_dados.get('por_que_se_sente_bem', '')
             idx_bem = 0 if db_bem == "1" else (1 if db_bem == "0" else None)
-            
-            por_que_se_sente_bem = st.radio(
-                "Você parece estar bem no momento. Continue cuidando da sua rotina. Gostaria de compartilhar o por que se sente bem?", 
-                ["Sim", "Não"], index=idx_bem
-            )
+            por_que_se_sente_bem = st.radio("Gostaria de compartilhar o por que se sente bem?", ["Sim", "Não"], index=idx_bem)
             
             descreva_como_se_sente = ""
             alguns_sinais_de_estresse = ""
             check_choices = [False] * 20
             
             if por_que_se_sente_bem == "Sim":
-                st.markdown("#### Detalhes sobre seus sentimentos")
                 descreva_como_se_sente = st.text_area("Descreva como se sente:", value=u_dados.get('descreva_como_se_sente', ''))
-                alguns_sinais_de_estresse = st.text_area("Alguns sinais de estresse apareceram. Vale a pena observar e cuidar de você. Como você explica esse sentimento? Como podemos te ajudar?", value=u_dados.get('alguns_sinais_de_estresse', ''))
-
-                st.write("**Como se sente (Selecione as opções aplicáveis):**")
-                
+                alguns_sinais_de_estresse = st.text_area("Alguns sinais de estresse apareceram. Como podemos te ajudar?", value=u_dados.get('alguns_sinais_de_estresse', ''))
+                st.write("**Como se sente:**")
                 check_choices = []
                 for idx, label in enumerate(checkbox_labels, start=1):
-                    # Puxa o status booleano (True/False) salvo para as checkboxes dinâmicas como_se_sente___x
                     db_checked = u_dados.get(f"como_se_sente___{idx}") == "1"
                     check_choices.append(st.checkbox(label, value=db_checked))
 
             st.markdown("---")
-            gostaria_de_falar_um_pouco = st.text_area("Gostaria de falar um pouco mais? Como podemos te ajudar?", value=u_dados.get('gostaria_de_falar_um_pouco', ''))
+            gostaria_de_falar_um_pouco = st.text_area("Gostaria de falar um pouco mais?", value=u_dados.get('gostaria_de_falar_um_pouco', ''))
 
-        submetido = st.form_submit_button("Atualizar Meu Formulário Completo")
+        # --- ABA 4: CRONOGRAMA INTELIGENTE E DINÂMICO ---
+        with tab_cronograma:
+            st.header("📅 Matriz de Planejamento e Execução Personalizada")
+            
+            # Filtra dinamicamente as colunas com base no período letivo real do aluno
+            semestres_ativos = [s for s in lista_semestres_padrao if semestre_no_intervalo(s, data_inicio_pos, data_fim_pos)]
+            colunas_ativas_rotulos = [s["rotulo"] for s in semestres_ativos]
+            
+            if not semestres_ativos:
+                st.warning("⚠️ Selecione as datas de início e defesa corretas na Aba 1 para gerar a matriz do seu cronograma.")
+                df_cronograma = pd.DataFrame(columns=["Atividade"])
+            else:
+                st.write(f"Sua pós-graduação está programada para durar **{len(semestres_ativos)} semestres**. Marque abaixo suas metas:")
+                
+                matriz_dados = []
+                for a_idx, atividade in enumerate(atividades_cronograma, start=1):
+                    linha = {"Atividade": atividade}
+                    for sem in semestres_ativos:
+                        # Localiza a posição do semestre no mapeamento absoluto (1 a 10) do REDCap
+                        posicao_absoluta_redcap = lista_semestres_padrao.index(sem) + 1
+                        chave_checkbox = f"cronograma_a{a_idx}_c1___{posicao_absoluta_redcap}"
+                        linha[sem["rotulo"]] = u_dados.get(chave_checkbox) == "1"
+                    matriz_dados.append(linha)
+                    
+                df_cronograma = pd.DataFrame(matriz_dados)
+            
+            cronograma_editado = st.data_editor(
+                df_cronograma,
+                hide_index=True,
+                disabled=["Atividade"],
+                use_container_width=True
+            )
 
-    # Processamento e persistência das modificações
+        submetido = st.form_submit_button("Atualizar Todo o Meu Formulário e Cronograma")
+
+    # Processamento pós-submissão
     if submetido:
-        with st.spinner("Sincronizando modificações no seu perfil do REDCap..."):
+        with st.spinner("Sincronizando check-in..."):
             
             data_envio = data_selecionada.strftime("%Y-%m-%d") if data_selecionada else ""
             horario_envio = horario_selecionado.strftime("%H:%M") if horario_selecionado else ""
+            
+            ini_pos_envio = data_inicio_pos.strftime("%Y-%m-%d") if data_inicio_pos else ""
+            fim_pos_envio = data_fim_pos.strftime("%Y-%m-%d") if data_fim_pos else ""
             
             dados_formulario = {
                 "record_id": u_dados.get('record_id'),  
@@ -254,6 +300,8 @@ else:
                 "e_mail": e_mail,
                 "login": u_dados.get('login'),
                 "senha": u_dados.get('senha'),
+                "data_inicio_pos": ini_pos_envio,  # <--- NOVOS CAMPOS SALVOS
+                "data_fim_pos": fim_pos_envio,      # <--- NOVOS CAMPOS SALVOS
                 "dados_pessoais_complete": "2" if (nome or e_mail) else "0",  
                 
                 "data_e_horario": data_envio,
@@ -285,14 +333,18 @@ else:
             for idx, checked in enumerate(check_choices, start=1):
                 dados_formulario[f"como_se_sente___{idx}"] = "1" if checked else "0"
 
+            # Gravação condicional apenas das checkboxes que estão visíveis na tela ativa do aluno
+            if semestres_ativos:
+                for r_idx, row in cronograma_editado.iterrows():
+                    for sem in semestres_ativos:
+                        posicao_absoluta_redcap = lista_semestres_padrao.index(sem) + 1
+                        valor_bool = row[sem["rotulo"]]
+                        dados_formulario[f"cronograma_a{r_idx+1}_c1___{posicao_absoluta_redcap}"] = "1" if valor_bool else "0"
+
             try:
-                # Transação 1: Gravação das atualizações estruturadas
                 project.import_records([dados_formulario])
-                
-                # Atualiza os dados na memória da sessão para manter a tela sincronizada pós-clique
                 st.session_state.dados_usuario.update(dados_formulario)
                 
-                # Transação 2: Atualização do arquivo se um novo upload foi efetuado
                 if arquivo_cronograma is not None:
                     project.import_file(
                         record=str(u_dados.get('record_id')),
@@ -300,8 +352,8 @@ else:
                         file_name=arquivo_cronograma.name,
                         file_object=arquivo_cronograma
                     )
-                st.success("🎉 Seus dados e avaliações foram sincronizados com sucesso!")
+                st.success("🎉 Perfil e cronograma dinâmico atualizados com sucesso!")
                 st.rerun()
                     
             except Exception as e:
-                st.error(f"Erro ao salvar modificações no perfil: {e}")
+                st.error(f"Erro ao salvar dados: {e}")
